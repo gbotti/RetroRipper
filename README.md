@@ -20,6 +20,20 @@ Ensure the following dependencies are installed on your system before running Re
 - `convert` (ImageMagick)
 - `yq`
 - `scanimage`
+- `dialog`
+
+## Hardware Requirements
+
+To use RetroRipper, you'll need the following hardware:
+
+- **GreaseWeazle Device**: Specifically, a GreaseWeazle V4 is used for interfacing with floppy drives to digitize the disks.
+- **Floppy Drives**:
+  - **3.5" Floppy Drive** configured as Drive A for 3.5-inch floppy disks.
+  - **5.25" Floppy Drive** configured as Drive B for 5.25-inch floppy disks.
+- **Flatbed Scanner**: A direct-attached, `scanimage`-compatible flatbed scanner for digitizing the physical appearance of the floppy disks. Ensure your scanner is supported by the `scanimage` tool for seamless integration.
+
+Ensure your system meets these hardware specifications to fully utilize RetroRipper's capabilities for digital preservation.
+
 
 ## Configuration (most important variables)
 

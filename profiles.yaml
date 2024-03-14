@@ -1,0 +1,31 @@
+profiles:
+  ibm.1440:
+    name: IBM 3.5" Floppy with 1.44 MB
+    gw_profile: ibm.1440
+    double_step: false
+    drive: A
+    tracks: ""
+  ibm:720:
+    name: IBM 3.5" Floppy with 720 KB
+    gw_profile: ibm.720
+    double_step: false
+    drive: A
+    tracks: ""
+  ibm.360:
+    name: IBM 5.25" Floppy with 360 KB
+    gw_profile: ibm.360
+    double_step: true
+    drive: B
+    tracks: "c=0-39"
+  ibm.1200:
+    name: IBM 5.25" Floppy with 1.2 MB
+    gw_profile: ibm.1200
+    double_step: false
+    drive: B
+    tracks: ""
+  ibm.160:
+    name: IBM 5.25" Floppy with 160 KB
+    gw_profile: ibm.160
+    double_step: true
+    drive: B
+    tracks: "c=0-39"

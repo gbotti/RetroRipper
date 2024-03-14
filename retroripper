@@ -1,0 +1,355 @@
+#!/bin/bash
+# ChangeMe
+ScanImage=1 # 0 = Scanimage will not be started; 1 = Scanimage will be started
+Scanner="canon_lide70" # Find your scanner with scanimage -L
+OutputPath="./FloppyDumpsGW"
+BackTitle="GreaseWeazler"
+
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+MultiDisk=false
+
+# Get script location for custom configs
+hxc="${SCRIPT_DIR}/config.script"
+yaml_file="${SCRIPT_DIR}/profiles.yaml"
+
+# Check if required commands are installed
+RequiredCommands=("yq" "gw" "7zz" "convert" "hxcfe" "scanimage")
+for RequiredCommand in "${RequiredCommands[@]}"; do
+  if ! command -v "${RequiredCommand}" &> /dev/null; then
+      echo "Error: ${RequiredCommand} is not installed. Please install it proceed."
+      exit 1
+  fi
+done
+
+function getProfiles() {
+  if [[ ${MultiDisk} == true ]]; then
+    return 0
+  fi
+
+  timestamp="$(date +%Y-%m-%dT%H-%M-%S)"
+  
+  # Get list of profiles
+  profiles=$(yq eval '.profiles | keys' $yaml_file | tr -d '[]"' | sed 's/- //')
+
+  # Create dialog options array
+  dialog_opts=()
+  while IFS= read -r profile; do
+      name=$(yq eval ".profiles[\"$profile\"].name" "$yaml_file")
+      dialog_opts+=("$profile" "$name")
+  done <<< "$profiles"
+  
+  dialog_opts+=("RAW A" "Just create a RAW dump of the 3.5\" Floppy and a map using hxcfe")
+  dialog_opts+=("RAW B" "Just create a RAW dump of the 5.25\" Floppy and a map using hxcfe")
+  
+  dialog_opts+=("Exit" "Exit the script")
+
+
+  # Display dialog box and get user selection
+  selection=$(dialog --clear --backtitle "${BackTitle}" --menu "Choose a profile:" 15 50 10 "${dialog_opts[@]}" 2>&1 >/dev/tty)
+
+  if [ $? -eq 0 ]; then
+      if [[ "${selection}" == "Exit" ]]; then
+        exit 0
+      fi
+    
+      case "${selection}" in
+        "RAW A")
+          drive="A"
+          decode="false"
+          revs=(3)
+          ;;
+        "RAW B")
+          drive="B"
+          decode="false"
+          revs=(3)
+          ;;
+        *)
+          # Get properties of the selected profile
+          profile_properties=$(yq eval ".profiles[\"$selection\"]" "$yaml_file")
+
+          profile_name=$(echo "$profile_properties" | yq e '.name')
+          gw_profile=$(echo "$profile_properties" | yq e '.["gw_profile"]')
+          double_step=$(echo "$profile_properties" | yq e '.["double_step"]')
+          tracks=$(echo "$profile_properties" | yq e '.["tracks"]')
+          drive=$(echo "$profile_properties" | yq e '.["drive"]')
+          decode="true"
+          revs=(1 3 8)
+          ;;
+      esac
+
+  else
+      echo "Selection canceled."
+      exit 1
+  fi
+}
+
+function get_and_sanitize_disk_title() {
+  if [[ ${ReRipFormat} == true ]]; then
+    ReRipFormat=false
+    return 0
+  fi
+
+  if [[ ${MultiDisk} == true ]]; then
+    return 0
+  fi
+
+  while true; do
+     # Use dialog to ask for Disk Title and save the input to a temporary file
+    temp_file=$(mktemp)
+    dialog --backtitle "${BackTitle}" --title "Disk Title Input" --inputbox "Enter Disk Title:" 8 60 2>$temp_file
+    if [[ $? != 0 ]]
+    then
+      return 1
+    fi
+    disk_title=$(<"$temp_file")
+    if [[ ! -z $disk_title ]]; then
+        # Correctly replace German umlauts and ß, then replace whitespaces with underscores
+        sanitized_title=$(echo "$disk_title" |
+                          sed 's/ä/ae/g; s/ö/oe/g; s/ü/ue/g; s/ß/ss/g;
+                              s/Ä/Ae/g; s/Ö/Oe/g; s/Ü/Ue/g;
+                              s/ /_/g')
+
+        # Remove other potentially problematic characters
+        sanitized_title=$(echo "$sanitized_title" | sed 's/[^a-zA-Z0-9_-]//g')
+        # sanitized_title=$(echo "$sanitized_title" | sed 's/[\/\\\:\*\?\"\<\>\|\&\;\,\(\)\!\@\#\$\%\^\+\=\`'"'"'\~]//g')
+
+        # Display sanitized title with dialog
+        # dialog --title "Sanitized Disk Title" --msgbox "Sanitized Disk Title: $sanitized_title" 6 50
+
+        # Cleanup temporary file
+        rm "${temp_file}"
+
+        return 0
+      fi
+    done
+}
+
+function ask_multidisk() {
+  if [[ ${MultiDisk} == true ]]
+  then
+    if dialog --stdout --title "Multiple Disks?" --backtitle "${BackTitle}" --defaultno --yesno "Yes: All disks of the set archived.\nNo: Continue with the next floppy of the set :P" 7 60;
+    then
+      MultiDisk=false
+    else
+      let "MultiDiskCounter++"
+    fi
+  else
+    if dialog --stdout --title "Multiple Disks?" --backtitle "${BackTitle}" --defaultno --yesno "Yes: This is a set of multiple Disks\nNo: Just one Floppy :P" 7 60;
+    then
+      MultiDisk=true
+      MultiDiskCounter=1
+    fi
+  fi
+  return 0
+}
+
+function create_environment() {
+  base_project_path="${OutputPath}/${sanitized_title}"
+  if [[ ${MultiDisk} == true ]]; then
+    project_path="${base_project_path}/rips/Disk_${MultiDiskCounter}"
+    suffix="_disk_${MultiDiskCounter}"
+  else
+    project_path="${base_project_path}"
+    suffix=""
+  fi
+  files_output="${base_project_path}/files/Disk_${MultiDiskCounter}"
+  img_output_dir="${base_project_path}/img"
+  mkdir -p "${img_output_dir}"
+  img_output="${img_output_dir}/$sanitized_title${suffix}.img"
+  ripping_dir="${project_path}/raw-rev_${rev}-drive_${drive}-tracks_${tracks}-dstep_${double_step}"
+  raw_output="${ripping_dir}/track00.0.raw"
+  mkdir -p "${ripping_dir}"
+
+  echo "${disk_title}" > "${project_path}/full_title.txt"
+
+  # Log file names
+  LogPath="${project_path}/logs"
+  mkdir -p "${LogPath}"
+  log_rip="${LogPath}/${timestamp}-${rev}-raw.log"
+  log_decode="${LogPath}/${timestamp}-${rev}-decode.log"
+  log_extract="${LogPath}/${timestamp}-${rev}-extract.log"
+  log_hxcfe_bitmap="${LogPath}/${timestamp}-${rev}-hxcfe.log"
+}
+
+function read_floppy_raw() {
+  # Check for Drive parameters
+  # I would recommend using A/B over 0/1 because "0" doesn't work for me
+  ripdrive="--drive=${drive}"
+
+  # Check for doublestepping
+  if [[ "${double_step}" == "true" ]]; then
+    step=":step=2"
+  else
+    step=""
+  fi
+
+  if [[ "${tracks}" != "" ]]
+	then
+		do_tracks="--tracks $tracks$step"
+	else
+		do_tracks=""
+	fi
+
+
+  echo "Ripping [${sanitized_title}]"
+
+  # Proceed to rip
+  if [[ ! -f "${raw_output}" ]]; then
+    gw read "${ripdrive}" ${do_tracks} --revs=${rev} "${raw_output}"  2>&1 | tee -a "${log_rip}"
+  else
+    echo "Rips found, skipping rip"
+  fi
+}
+
+function extract_image() {
+  mdir -i "${img_output}"  2>&1 | tee -a $log_extract
+  mkdir -p "${files_output}"
+  7zz x "${img_output}" -o"${files_output}" 2>&1 | tee -a $log_extract
+}
+
+function decode() {
+  echo "Decoding for ${profile_name}"
+  gw convert --format "${gw_profile}" "${raw_output}" "${img_output}"  2>&1 | tee -a "${log_decode}"
+}
+
+function decode_verify() {
+  if [[ ! -f ${log_decode} ]]
+  then
+    return 0
+  fi
+
+  sectors_found="$(grep Found ${log_decode} | awk '{print $2}')"
+  sectors_total="$(grep Found ${log_decode} | awk '{print $5}')"
+
+  echo "Decoded ${sectors_found}/${sectors_total}"
+  if [[ "${sectors_found}" == "0"  ]]
+  then
+    echo "No sectors found, is the format correct?"
+    return 1
+  fi
+  if [[ "${sectors_found}" != "${sectors_total}"  ]]
+  then
+      echo "Sector errors found"
+      return 2
+  fi
+
+  return 0
+}
+
+function do_scanimage() {
+  if [[ "$(which scanimage)" == "" ]]
+  then
+    echo "You need to install scanimage onto your system to enable scanning images"
+    return 1
+  fi
+
+  # 92x95mm is a little bigger than a 3.5" floppy
+  XSIZE="${1:-92}"
+  YSIZE="${2:-95}"
+
+  scan_output="${base_project_path}/images"
+  echo "Scanning ${scan_output}/FloppyScan_${XSIZE}x${YSIZE}.jpg..."
+  mkdir -p "${scan_output}"
+  scanimage -d "${Scanner}" -x${XSIZE} -y${YSIZE} --mode Color --resolution 300 --format jpeg > "${scan_output}/FloppyScan_${XSIZE}x${YSIZE}${suffix}.jpg"
+}
+
+function do_map() {
+  OutputPictureBaseName="${project_path}/hxcfe-raw-${rev}"
+  if [[ -f "${OutputPictureBaseName}.png" ]]
+  then
+    echo "Image already exists"
+    return 0
+  fi
+
+  hxcfe -script:"$hxc" -finput:"${raw_output}" -foutput:"${OutputPictureBaseName}.bmp" -conv:BMP_DISK_IMAGE 2>&1 1>>$log_hxcfe_bitmap \
+  convert "${OutputPictureBaseName}.bmp" "${OutputPictureBaseName}.png" 2>&1 1>>$log_hxcfe_bitmap \
+  rm "${OutputPictureBaseName}.bmp" 2>&1 1>>$log_hxcfe_bitmap & 
+}
+
+function finalize() {
+  mv "${base_project_path}" "${base_project_path}.${gw_profile}.${timestamp}"
+  MultiDiskCounter=0  
+}
+
+function main() {
+  getProfiles
+  get_and_sanitize_disk_title
+  if [[ $? == 1 ]]; then
+    return 0
+  fi
+
+  ask_multidisk  
+
+  if [[ ${MultiDisk} == false && $MultiDiskCounter -gt 0 ]]; then
+    return 0
+  fi
+  clear
+  
+  for rev in ${revs[@]}
+  do
+    create_environment
+    echo "Trying to Rip Floppy with ${rev} Revisions."
+    read_floppy_raw
+    # Generate image of flux
+    echo "Creating Bitmap of the Floppy in the Background. Please Check the Logs for further details."
+    do_map
+    # Use overloaded decode for verifying data
+    if [[ ${decode} == true ]]; then
+      decode
+      # Use local verification based on log
+      decode_verify
+      decode_result=$?
+      if [[ ${decode_result} == 0 ]];
+      then
+        break
+      fi
+    fi
+    if [[ "${decode_result}" == "1" ]]; then
+      if dialog --stdout --title "It seems there were 0 Sectors found. Select another Profile?" --backtitle "${BackTitle}" --yesno "Yes: Select, No: Try next revisions" 7 80;
+      then
+        ReRipFormat=true
+        return 3
+      fi
+    fi
+  done
+
+  if [[ "${decode_result}" != "1" ]]; then
+    extract_image
+  fi
+
+  if [[ "${ScanImage}" == "1" ]]; then
+    case ${drive} in
+      A)
+        XSIZE=92
+        YSIZE=95
+        ;;
+      B)
+        XSIZE=134
+        YSIZE=134
+        ;;
+    esac
+
+    if dialog --stdout --title "Scan image of the Floppy?" --backtitle "${BackTitle}" --yesno "Yes: Scan, No: Next Floppy :P" 7 60;
+    then
+      if dialog --stdout --title "I hope you didn't forget?" --backtitle "${BackTitle}" --msgbox "In case you did,\nplease put your floppy into the scanner and hit OK." 7 60;
+      then
+        do_scanimage ${XSIZE} ${YSIZE}
+      fi
+    fi
+  fi
+
+  
+}
+
+# Call the main function
+while true
+do
+  main
+  if [[ ${MultiDisk} == false ]]
+  then
+    finalize
+  fi
+done
+
+exit 1
+

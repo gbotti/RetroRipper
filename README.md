@@ -32,9 +32,6 @@ To use RetroRipper, you'll need the following hardware:
   - **5.25" Floppy Drive** configured as Drive B for 5.25-inch floppy disks.
 - **Flatbed Scanner**: A direct-attached, `scanimage`-compatible flatbed scanner for digitizing the physical appearance of the floppy disks. Ensure your scanner is supported by the `scanimage` tool for seamless integration.
 
-Ensure your system meets these hardware specifications to fully utilize RetroRipper's capabilities for digital preservation.
-
-
 ## Configuration (most important variables)
 
 1. **ScanImage**: Control whether the script attempts to scan the floppy disk post-dumping. Set to `1` to enable, `0` to disable.

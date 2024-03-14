@@ -3,7 +3,7 @@
 ScanImage=1 # 0 = Scanimage will not be started; 1 = Scanimage will be started
 Scanner="canon_lide70" # Find your scanner with scanimage -L
 OutputPath="./FloppyDumpsGW"
-BackTitle="GreaseWeazler"
+BackTitle="RetroRipper"
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 MultiDisk=false
